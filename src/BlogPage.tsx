@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   Heart,
@@ -91,7 +91,7 @@ export default function BlogPage() {
         localStorage.removeItem("token");
         showToast("Сессия истекла. Войдите снова.", "error");
       }
-    } catch  {
+    } catch {
       showToast("Ошибка загрузки профиля", "error");
     } finally {
       setLoading(false);
@@ -111,7 +111,7 @@ export default function BlogPage() {
       } else {
         throw new Error("Не удалось загрузить посты");
       }
-    } catch  {
+    } catch {
       showToast("Ошибка загрузки постов", "error");
     }
   }, []);
@@ -153,7 +153,7 @@ export default function BlogPage() {
       } else {
         showToast(data.message || "Ошибка авторизации", "error");
       }
-    } catch  {
+    } catch {
       showToast("Сервер недоступен", "error");
     } finally {
       setLoading(false);
