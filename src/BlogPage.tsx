@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Heart,
@@ -7,7 +7,19 @@ import {
   UserPlus,
   SendHorizonal,
   LogOut,
+  Plus,
+  X,
+  Users,
+  Search,
+  MoreVertical,
+  Edit,
+  Check,
+  CheckCheck,
+  Crown,
+  UserMinus,
+  UserCheck,
 } from "lucide-react";
+
 import {
   Avatar,
   Box,
@@ -18,20 +30,37 @@ import {
   CardHeader,
   CircularProgress,
   Container,
-  Grid,
   IconButton,
   TextField,
   Typography,
   Snackbar,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItemAvatar,
+  ListItemText,
+  InputAdornment,
+  Paper,
+  Menu,
+  MenuItem,
+  Tooltip,
+  Divider,
+  Chip,
+  ListItemButton,
 } from "@mui/material";
+
+import Grid from "@mui/material/GridLegacy";
+import { format } from "date-fns";
 
 const API_URL = "https://blog-node-km1z.onrender.com";
 
 interface User {
+  _id: string;
   name: string;
   email: string;
-  _id: string;
   role: "user" | "admin";
 }
 
@@ -41,6 +70,22 @@ interface Post {
   content: string;
   author: { name: string; email: string; role: string };
   likes: string[];
+}
+
+interface Chat {
+  _id: string;
+  name?: string;
+  isChatMode: boolean;
+  members: { user: User | string; role: "admin" | "member" }[];
+  messages: string[];
+}
+
+interface Message {
+  _id: string;
+  sender: User | string;
+  text: string;
+  status: "sent" | "read";
+  createdAt: string;
 }
 
 interface Toast {
@@ -62,6 +107,28 @@ export default function BlogPage() {
     severity: "info",
   });
 
+  // Чаты
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [editingMessage, setEditingMessage] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [users, setUsers] = useState<User[]>([]);
+  const [openChatDialog, setOpenChatDialog] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [chatName, setChatName] = useState("");
+  const [searchUser, setSearchUser] = useState("");
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [menuMessage, setMenuMessage] = useState<Message | null>(null);
+  const [chatMenuAnchor, setChatMenuAnchor] = useState<null | HTMLElement>(
+    null
+  );
+  const [editingChatName, setEditingChatName] = useState(false);
+  const [newChatName, setNewChatName] = useState("");
+  const [openMembersDialog, setOpenMembersDialog] = useState(false);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const isAdmin = user?.role === "admin";
 
   const showToast = (
@@ -71,26 +138,23 @@ export default function BlogPage() {
     setToast({ open: true, message, severity });
   };
 
-  const handleCloseToast = () => {
-    setToast((prev) => ({ ...prev, open: false }));
+  const handleCloseToast = () => setToast((prev) => ({ ...prev, open: false }));
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // === Загрузка данных ===
   const loadUser = useCallback(async () => {
     const token = localStorage.getItem("token");
     if (!token) return;
-
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const userData = await res.json();
-        setUser(userData);
-      } else {
-        localStorage.removeItem("token");
-        showToast("Сессия истекла. Войдите снова.", "error");
-      }
+      if (res.ok) setUser(await res.json());
+      else localStorage.removeItem("token");
     } catch {
       showToast("Ошибка загрузки профиля", "error");
     } finally {
@@ -100,21 +164,75 @@ export default function BlogPage() {
 
   const loadPosts = useCallback(async () => {
     const token = localStorage.getItem("token");
-
     try {
       const res = await fetch(`${API_URL}/posts`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPosts(data);
-      } else {
-        throw new Error("Не удалось загрузить посты");
-      }
+      if (res.ok) setPosts(await res.json());
     } catch {
       showToast("Ошибка загрузки постов", "error");
     }
   }, []);
+
+  const loadChats = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token || !user) return;
+    try {
+      const res = await fetch(`${API_URL}/chats`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChats(data);
+      }
+    } catch {
+      showToast("Ошибка загрузки чатов", "error");
+    }
+  }, [user]);
+
+  const loadUsers = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_URL}/users`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data.filter((u: User) => u._id !== user?._id));
+      }
+    } catch {
+      showToast("Ошибка загрузки пользователей", "error");
+    }
+  }, [user]);
+
+  const loadMessages = useCallback(
+    async (chatId: string) => {
+      const token = localStorage.getItem("token");
+      try {
+        const res = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data: Message[] = await res.json();
+
+          setMessages(data);
+
+          const unread = data.filter(
+            (m) => m.status === "sent" && m.sender !== user?._id
+          );
+          for (const msg of unread) {
+            await fetch(`${API_URL}/chats/${chatId}/messages/${msg._id}/read`, {
+              method: "PATCH",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
+        }
+      } catch {
+        showToast("Ошибка загрузки сообщений", "error");
+      }
+    },
+    [user]
+  );
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -122,16 +240,31 @@ export default function BlogPage() {
       loadUser();
       loadPosts();
     } else {
-      loadPosts(); // Load public posts even if not logged in
+      loadPosts();
     }
   }, [loadUser, loadPosts]);
 
+  useEffect(() => {
+    if (user) {
+      loadChats();
+      loadUsers();
+      const interval = setInterval(() => {
+        loadChats();
+        if (selectedChat) loadMessages(selectedChat._id);
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [user, selectedChat, loadChats, loadMessages, loadUsers]);
+
+  useEffect(() => {
+    if (selectedChat) loadMessages(selectedChat._id);
+  }, [selectedChat, loadMessages]);
+
+  // === Авторизация ===
   async function handleAuth(type: "login" | "register") {
     if (!auth.email || !auth.password || (type === "register" && !auth.name)) {
-      showToast("Заполните все поля!", "error");
-      return;
+      return showToast("Заполните все поля!", "error");
     }
-
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/auth/${type}`, {
@@ -140,18 +273,16 @@ export default function BlogPage() {
         body: JSON.stringify(auth),
       });
       const data = await res.json();
-
       if (res.ok) {
         localStorage.setItem("token", data.token);
         setAuth({ name: "", email: "", password: "" });
         await loadUser();
-        await loadPosts();
         showToast(
           type === "login" ? "Добро пожаловать!" : "Регистрация успешна!",
           "success"
         );
       } else {
-        showToast(data.message || "Ошибка авторизации", "error");
+        showToast(data.message || "Ошибка", "error");
       }
     } catch {
       showToast("Сервер недоступен", "error");
@@ -160,27 +291,22 @@ export default function BlogPage() {
     }
   }
 
+  // === Посты ===
   async function handleCreate() {
-    if (!title.trim() || !content.trim()) {
-      showToast("Заполните заголовок и текст", "error");
-      return;
-    }
-
+    if (!title.trim() || !content.trim())
+      return showToast("Заполните поля", "error");
     const token = localStorage.getItem("token");
+    const tempId = `temp-${Date.now()}`;
     const newPost: Post = {
-      _id: `temp-${Date.now()}`,
+      _id: tempId,
       title,
       content,
-      author: { name: user!.name, email: user!.email, role: user!.role },
+      author: user!,
       likes: [],
     };
-
-    // Optimistic UI
     setPosts((prev) => [newPost, ...prev]);
     setTitle("");
     setContent("");
-    showToast("Пост создаётся...", "info");
-
     try {
       const res = await fetch(`${API_URL}/post/create`, {
         method: "POST",
@@ -190,536 +316,1135 @@ export default function BlogPage() {
         },
         body: JSON.stringify({ title, content }),
       });
-
       if (res.ok) {
         const created = await res.json();
-        setPosts((prev) =>
-          prev.map((p) => (p._id === newPost._id ? created : p))
-        );
+        setPosts((prev) => prev.map((p) => (p._id === tempId ? created : p)));
         showToast("Пост опубликован!", "success");
-      } else {
-        throw new Error("Не удалось создать пост");
       }
     } catch {
-      setPosts((prev) => prev.filter((p) => p._id !== newPost._id));
-      showToast("Не удалось создать пост", "error");
+      setPosts((prev) => prev.filter((p) => p._id !== tempId));
+      showToast("Ошибка создания поста", "error");
     }
   }
 
   async function handleLike(id: string) {
     const token = localStorage.getItem("token");
-    if (!user) {
-      showToast("Войдите, чтобы лайкать", "error");
-      return;
-    }
-
-    // Optimistic update
+    if (!user) return showToast("Войдите", "error");
     setPosts((prev) =>
       prev.map((p) => {
         if (p._id !== id) return p;
-        const alreadyLiked = p.likes.includes(user._id);
+        const liked = p.likes.includes(user._id);
         return {
           ...p,
-          likes: alreadyLiked
+          likes: liked
             ? p.likes.filter((uid) => uid !== user._id)
             : [...p.likes, user._id],
         };
       })
     );
-
     try {
-      const res = await fetch(`${API_URL}/post/${id}/like`, {
+      await fetch(`${API_URL}/post/${id}/like`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (!res.ok) {
-        throw new Error("Like failed");
-      }
-      // Optionally refetch or trust optimistic
     } catch {
       showToast("Ошибка лайка", "error");
-      loadPosts(); // Revert on error
+      loadPosts();
     }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Удалить пост?")) return;
-
     const token = localStorage.getItem("token");
-
-    // Optimistic delete
     setPosts((prev) => prev.filter((p) => p._id !== id));
-    showToast("Удаление...", "info");
-
     try {
-      const res = await fetch(`${API_URL}/post/${id}/delete`, {
+      await fetch(`${API_URL}/post/${id}/delete`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (res.ok) {
-        showToast("Пост удалён", "success");
-      } else {
-        throw new Error("Delete failed");
-      }
+      showToast("Пост удалён", "success");
     } catch {
-      showToast("Не удалось удалить пост", "error");
-      loadPosts(); // Revert
+      showToast("Ошибка удаления", "error");
+      loadPosts();
     }
   }
 
   function handleLogout() {
     localStorage.removeItem("token");
     setUser(null);
-    showToast("Вы вышли из аккаунта", "info");
+    setChats([]);
+    setSelectedChat(null);
+    showToast("Вы вышли", "info");
   }
+
+  // === Чаты ===
+  const createChat = async () => {
+    if (selectedUsers.length === 0)
+      return showToast("Выберите пользователя", "error");
+    const token = localStorage.getItem("token");
+    const isGroup = !(selectedUsers.length > 1 || chatName.trim());
+
+    try {
+      const res = await fetch(`${API_URL}/chats`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          users: selectedUsers,
+          isChatMode: isGroup,
+          name: isGroup ? chatName : undefined,
+          message: isGroup ? `${chatName} создан!` : "Чат начат!",
+        }),
+      });
+      if (res.ok) {
+        const chat = await res.json();
+        setChats((prev) => [chat, ...prev]);
+        setSelectedChat(chat);
+        setOpenChatDialog(false);
+        setSelectedUsers([]);
+        setChatName("");
+        showToast("Чат создан!", "success");
+      }
+    } catch {
+      showToast("Ошибка создания чата", "error");
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !selectedChat) return;
+    const token = localStorage.getItem("token");
+    const tempId = `temp-${Date.now()}`;
+    const tempMsg: Message = {
+      _id: user?._id as string,
+      sender: user?._id as string,
+      text: newMessage,
+      status: "sent",
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempMsg]);
+    setNewMessage("");
+    scrollToBottom();
+
+    try {
+      const res = await fetch(`${API_URL}/chats/${selectedChat._id}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text: newMessage }),
+      });
+      if (res.ok) {
+        const msg = await res.json();
+        setMessages((prev) => prev.map((m) => (m._id === tempId ? msg : m)));
+      }
+    } catch {
+      setMessages((prev) => prev.filter((m) => m._id !== tempId));
+      showToast("Не отправлено", "error");
+    }
+  };
+
+  const editMessage = async (msgId: string) => {
+    if (!editText.trim() || !selectedChat) return;
+    const token = localStorage.getItem("token");
+    const oldMsg = messages.find((m) => m._id === msgId);
+    if (!oldMsg) return;
+
+    setMessages((prev) =>
+      prev.map((m) => (m._id === msgId ? { ...m, text: editText } : m))
+    );
+    setEditingMessage(null);
+    setEditText("");
+
+    try {
+      await fetch(
+        `${API_URL}/chats/${selectedChat._id}/messages/${msgId}/change`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ text: editText }),
+        }
+      );
+    } catch {
+      setMessages((prev) => prev.map((m) => (m._id === msgId ? oldMsg : m)));
+      showToast("Ошибка редактирования", "error");
+    }
+  };
+
+  const deleteMessage = async (msgId: string) => {
+    const token = localStorage.getItem("token");
+    if (!selectedChat) return;
+    setMessages((prev) => prev.filter((m) => m._id !== msgId));
+    try {
+      await fetch(`${API_URL}/chats/${selectedChat._id}/messages/${msgId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      loadMessages(selectedChat._id);
+      showToast("Ошибка удаления", "error");
+    }
+  };
+
+  const deleteChat = async (chatId: string) => {
+    if (!confirm("Удалить чат?")) return;
+    const token = localStorage.getItem("token");
+    try {
+      await fetch(`${API_URL}/chats/${chatId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setChats((prev) => prev.filter((c) => c._id !== chatId));
+      if (selectedChat?._id === chatId) setSelectedChat(null);
+      showToast("Чат удалён", "success");
+    } catch {
+      showToast("Ошибка удаления чата", "error");
+    }
+  };
+
+  const editChatName = async () => {
+    if (!newChatName.trim() || !selectedChat) return;
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_URL}/chats/${selectedChat._id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: newChatName }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setChats((prev) =>
+          prev.map((c) => (c._id === updated._id ? updated : c))
+        );
+        setSelectedChat(updated);
+        setNewChatName("");
+        setEditingChatName(false);
+        showToast("Название обновлено", "success");
+      }
+    } catch {
+      showToast("Ошибка изменения названия", "error");
+    }
+  };
+
+  const addMember = async (memberId: string) => {
+    const token = localStorage.getItem("token");
+    if (!selectedChat) return;
+    try {
+      const res = await fetch(
+        `${API_URL}/chats/${selectedChat._id}/members/${memberId}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        const updated = await res.json();
+        setChats((prev) =>
+          prev.map((c) => (c._id === updated._id ? updated : c))
+        );
+        setSelectedChat(updated);
+        showToast("Участник добавлен", "success");
+      }
+    } catch {
+      showToast("Ошибка добавления", "error");
+    }
+  };
+
+  const removeMember = async (memberId: string) => {
+    if (!confirm("Удалить участника?")) return;
+    const token = localStorage.getItem("token");
+    if (!selectedChat) return;
+    try {
+      await fetch(`${API_URL}/chats/${selectedChat._id}/members/${memberId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      loadChats();
+      loadMessages(selectedChat._id);
+      showToast("Участник удалён", "success");
+    } catch {
+      showToast("Ошибка удаления", "error");
+    }
+  };
+
+  const changeRole = async (memberId: string, role: "admin" | "member") => {
+    const token = localStorage.getItem("token");
+    if (!selectedChat) return;
+    try {
+      await fetch(
+        `${API_URL}/chats/${selectedChat._id}/members/${memberId}/role`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ role }),
+        }
+      );
+      loadChats();
+      showToast("Роль изменена", "success");
+    } catch {
+      showToast("Ошибка изменения роли", "error");
+    }
+  };
+
+  const getChatName = (chat: Chat) => {
+    if (chat.name) return chat.name;
+    const other = users
+      .filter((m) => chat?.members?.some?.((u) => m._id === u.user))
+      .map((el) => el.name);
+    return other?.join(",") || "Чат";
+  };
+
+  const getChatAvatar = (chat: Chat) => {
+    if (chat.isChatMode && chat.name) return <Users size={16} />;
+    const other = users.find((m) =>
+      chat?.members?.some?.((u) => m._id === u.user)
+    );
+
+    return other?.name?.[0]?.toUpperCase() || "?";
+  };
+
+  const formatTime = (date: string) => format(new Date(date), "HH:mm");
+
+  const openMessageMenu = (e: React.MouseEvent<HTMLElement>, msg: Message) => {
+    setMenuAnchor(e.currentTarget);
+    setMenuMessage(msg);
+  };
+
+  const openChatMenu = (e: React.MouseEvent<HTMLElement>) => {
+    setChatMenuAnchor(e.currentTarget);
+  };
+
+  const closeMenus = () => {
+    setMenuAnchor(null);
+    setMenuMessage(null);
+    setChatMenuAnchor(null);
+  };
+
+  const isChatAdmin =
+    selectedChat?.members?.find?.((m) => m.user === user?._id)?.role ===
+    "admin";
+
+  useEffect(() => {
+    if (selectedChat && messages.length) {
+      scrollToBottom();
+    }
+  }, [selectedChat, messages.length]);
 
   return (
     <Box
       sx={{
         minHeight: "100vh",
-        background: "linear-gradient(to bottom, #f8f9fa, #e9ecef)",
-        py: 6,
-        px: 2,
-        color: "#222",
+        bgcolor: "#f5f5f5",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
       }}
     >
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
+      <Box
+        sx={{
+          bgcolor: "white",
+          boxShadow: 1,
+          p: 2,
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+        }}
       >
-        <Typography
-          variant="h3"
-          fontWeight={800}
-          textAlign="center"
+        <Container
+          maxWidth="lg"
           sx={{
-            mb: 2,
-            background: "linear-gradient(90deg, #6a11cb, #2575fc)",
-            backgroundClip: "text",
-            WebkitBackgroundClip: "text",
-            color: "transparent",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
           }}
         >
-          DreamNet ✨
-        </Typography>
+          <Typography
+            variant="h5"
+            fontWeight={800}
+            sx={{
+              background: "linear-gradient(90deg, #6a11cb, #2575fc)",
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              color: "transparent",
+            }}
+          >
+            DreamNet
+          </Typography>
+          {user && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Avatar sx={{ bgcolor: "#6a11cb" }}>{user.name[0]}</Avatar>
+              <Box sx={{ display: { xs: "none", sm: "block" } }}>
+                <Typography fontWeight={600}>{user.name}</Typography>
+                <Typography variant="caption" color="primary">
+                  {user.role === "admin" ? "Админ" : "Пользователь"}
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleLogout}
+                startIcon={<LogOut size={16} />}
+              >
+                Выйти
+              </Button>
+            </Box>
+          )}
+        </Container>
+      </Box>
 
-        {user && (
+      <Container maxWidth="lg" sx={{ flex: 1, py: 3 }}>
+        {loading && (
           <Box
             sx={{
+              position: "fixed",
+              inset: 0,
+              bgcolor: "rgba(255,255,255,0.9)",
+              zIndex: 1000,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: 2,
-              mb: 4,
-              flexWrap: "wrap",
             }}
           >
-            <Avatar
-              sx={{
-                bgcolor: "#6a11cb",
-                fontWeight: "bold",
-                boxShadow: "0 0 10px rgba(106, 17, 203, 0.4)",
-              }}
-            >
-              {user.name[0].toUpperCase()}
-            </Avatar>
-            <Box textAlign="center">
-              <Typography fontWeight={600} color="#333">
-                {user.name}
-              </Typography>
-              <Typography variant="caption" color="primary">
-                {user.role === "admin" ? "👑 Админ" : "✨ Пользователь"}
-              </Typography>
-            </Box>
-            <Button
-              variant="outlined"
-              onClick={handleLogout}
-              startIcon={<LogOut size={16} />}
-              sx={{
-                borderColor: "#6a11cb",
-                color: "#6a11cb",
-                fontWeight: 500,
-                "&:hover": { bgcolor: "rgba(106, 17, 203, 0.08)" },
-              }}
-            >
-              Выйти
-            </Button>
+            <CircularProgress />
           </Box>
         )}
-      </motion.div>
 
-      {/* Global Loading */}
-      {loading && (
-        <Box
-          sx={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(255,255,255,0.85)",
-            backdropFilter: "blur(8px)",
-            zIndex: 1000,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 2,
+        {/* Авторизация */}
+        {!user && (
+          <Grid container justifyContent="center">
+            <Grid item xs={12} sm={8} md={6} lg={4}>
+              <Card sx={{ p: 4, borderRadius: 3, boxShadow: 3 }}>
+                <CardHeader
+                  title="Вход / Регистрация"
+                  sx={{ textAlign: "center", color: "#6a11cb" }}
+                />
+                <CardContent>
+                  <TextField
+                    fullWidth
+                    label="Имя"
+                    value={auth.name}
+                    onChange={(e) => setAuth({ ...auth, name: e.target.value })}
+                    sx={{ mb: 2 }}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Email"
+                    type="email"
+                    value={auth.email}
+                    onChange={(e) =>
+                      setAuth({ ...auth, email: e.target.value })
+                    }
+                    sx={{ mb: 2 }}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Пароль"
+                    type="password"
+                    value={auth.password}
+                    onChange={(e) =>
+                      setAuth({ ...auth, password: e.target.value })
+                    }
+                    sx={{ mb: 3 }}
+                  />
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Button
+                        fullWidth
+                        variant="outlined"
+                        onClick={() => handleAuth("register")}
+                        startIcon={<UserPlus />}
+                      >
+                        Регистрация
+                      </Button>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        onClick={() => handleAuth("login")}
+                        startIcon={<LogIn />}
+                      >
+                        Вход
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        )}
+
+        {user && (
+          <Grid container spacing={3}>
+            {/* Чаты */}
+            <Grid item xs={12} md={4}>
+              <Paper
+                sx={{
+                  height: "calc(100vh - 180px)",
+                  display: "flex",
+                  flexDirection: "column",
+                  borderRadius: 3,
+                  overflow: "hidden",
+                  boxShadow: 3,
+                }}
+              >
+                <Box
+                  sx={{
+                    p: 2,
+                    bgcolor: "#6a11cb",
+                    color: "white",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <Typography fontWeight={600}>Чаты</Typography>
+                  <IconButton
+                    size="small"
+                    onClick={() => setOpenChatDialog(true)}
+                    sx={{ color: "white" }}
+                  >
+                    <Plus />
+                  </IconButton>
+                </Box>
+                <List sx={{ flex: 1, overflow: "auto" }}>
+                  {chats.map((chat) => (
+                    <ListItemButton
+                      key={chat._id}
+                      selected={selectedChat?._id === chat._id}
+                      onClick={() => setSelectedChat(chat)}
+                      sx={{
+                        borderLeft:
+                          selectedChat?._id === chat._id
+                            ? "4px solid #6a11cb"
+                            : "4px solid transparent",
+                      }}
+                    >
+                      <ListItemAvatar>
+                        <Avatar
+                          sx={{
+                            bgcolor: chat.isChatMode ? "#e3f2fd" : "#fff3e0",
+                          }}
+                        >
+                          {getChatAvatar(chat)}
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={getChatName(chat)}
+                        secondary={messages[messages.length - 1]?.text}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Paper>
+            </Grid>
+
+            {/* Посты или Чат */}
+            <Grid item xs={12} md={8}>
+              {!selectedChat ? (
+                // Посты
+                <>
+                  <Card sx={{ mb: 3, p: 3, borderRadius: 3, boxShadow: 3 }}>
+                    <TextField
+                      fullWidth
+                      label="Заголовок"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      sx={{ mb: 2 }}
+                    />
+                    <TextField
+                      fullWidth
+                      label="Текст"
+                      multiline
+                      minRows={3}
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      sx={{ mb: 2 }}
+                    />
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      onClick={handleCreate}
+                      startIcon={<SendHorizonal />}
+                    >
+                      Опубликовать
+                    </Button>
+                  </Card>
+                  {posts.map((p) => {
+                    const isPostAdmin = p.author.role === "admin";
+                    return (
+                      <motion.div
+                        key={p._id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                      >
+                        <Card
+                          sx={{
+                            mb: 3,
+                            bgcolor: isPostAdmin ? "#fffbe6" : "#fff",
+                            border: isPostAdmin
+                              ? "1px solid #ff6b6b"
+                              : "1px solid #e0e0e0",
+                            borderRadius: 3,
+                            overflow: "hidden",
+                            boxShadow: isPostAdmin
+                              ? "0 0 15px rgba(255, 107, 107, 0.3)"
+                              : "0 2px 12px rgba(0,0,0,0.06)",
+                            position: "relative",
+                          }}
+                        >
+                          {isPostAdmin && (
+                            <Box
+                              sx={{
+                                position: "absolute",
+                                top: 8,
+                                right: 8,
+                                bgcolor: "#ff6b6b",
+                                color: "white",
+                                px: 1,
+                                py: 0.5,
+                                borderRadius: 1,
+                                fontSize: "0.7rem",
+                                fontWeight: 600,
+                              }}
+                            >
+                              ADMIN
+                            </Box>
+                          )}
+                          <CardHeader
+                            avatar={
+                              isPostAdmin ? (
+                                <Avatar sx={{ bgcolor: "transparent", p: 0.5 }}>
+                                  <img
+                                    src="/snoopy-esnupi.gif"
+                                    alt="Admin"
+                                    style={{
+                                      width: "100%",
+                                      height: "100%",
+                                      objectFit: "contain",
+                                    }}
+                                  />
+                                </Avatar>
+                              ) : (
+                                <Avatar
+                                  sx={{
+                                    bgcolor: "#e3f2fd",
+                                    color: "#1976d2",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {p.author.name[0].toUpperCase()}
+                                </Avatar>
+                              )
+                            }
+                            title={p.author.name}
+                            subheader={
+                              <Typography
+                                variant="caption"
+                                color={
+                                  isPostAdmin ? "#d32f2f" : "text.secondary"
+                                }
+                              >
+                                {isPostAdmin ? "Админ" : "Пользователь"}
+                              </Typography>
+                            }
+                          />
+                          <CardContent>
+                            <Typography variant="h6" gutterBottom>
+                              {p.title}
+                            </Typography>
+                            <Typography>{p.content}</Typography>
+                          </CardContent>
+                          <CardActions>
+                            <IconButton
+                              sx={{ outline: 0 }}
+                              onClick={() => handleLike(p._id)}
+                            >
+                              <Heart
+                                style={{
+                                  stroke: p.likes.includes(user._id)
+                                    ? "#ff1744"
+                                    : "currentcolor",
+                                }}
+                                fill={
+                                  p.likes.includes(user._id)
+                                    ? "#ff1744"
+                                    : "none"
+                                }
+                              />
+                              <Typography sx={{ ml: 0.5 }}>
+                                {p.likes.length}
+                              </Typography>
+                            </IconButton>
+                            {(p.author.email === user.email || isAdmin) && (
+                              <IconButton
+                                onClick={() => handleDelete(p._id)}
+                                color="error"
+                              >
+                                <Trash2 />
+                              </IconButton>
+                            )}
+                          </CardActions>
+                        </Card>
+                      </motion.div>
+                    );
+                  })}
+                </>
+              ) : (
+                // Чат
+                <Paper
+                  sx={{
+                    height: "calc(100vh - 180px)",
+                    display: "flex",
+                    flexDirection: "column",
+                    borderRadius: 3,
+                    overflow: "hidden",
+                    boxShadow: 3,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      p: 2,
+                      bgcolor: "#6a11cb",
+                      color: "white",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setSelectedChat(null)}
+                        sx={{ color: "white" }}
+                      >
+                        <X />
+                      </IconButton>
+                      {editingChatName ? (
+                        <TextField
+                          size="small"
+                          value={newChatName}
+                          onChange={(e) => setNewChatName(e.target.value)}
+                          onKeyPress={(e) =>
+                            e.key === "Enter" && editChatName()
+                          }
+                          sx={{ input: { color: "white" } }}
+                        />
+                      ) : (
+                        <Typography fontWeight={600}>
+                          {getChatName(selectedChat)}
+                        </Typography>
+                      )}
+                      {selectedChat.isChatMode && isChatAdmin && (
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setEditingChatName(true);
+                            setNewChatName(selectedChat.name || "");
+                          }}
+                          sx={{ color: "white" }}
+                        >
+                          <Edit size={16} />
+                        </IconButton>
+                      )}
+                    </Box>
+
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      {selectedChat.isChatMode && (
+                        <Tooltip title="Управление участниками">
+                          <IconButton
+                            size="small"
+                            onClick={() => setOpenMembersDialog(true)}
+                            sx={{ color: "white" }}
+                          >
+                            <Users />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {selectedChat.isChatMode && (
+                        <IconButton
+                          size="small"
+                          onClick={openChatMenu}
+                          sx={{ color: "white" }}
+                        >
+                          <MoreVertical />
+                        </IconButton>
+                      )}
+                    </Box>
+                  </Box>
+
+                  <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
+                    {messages.map((msg) => {
+                      const sender = msg.sender as User;
+                      const isMe = (sender as unknown as string) === user?._id;
+                      return (
+                        <Box
+                          key={msg._id}
+                          sx={{
+                            mb: 2,
+                            display: "flex",
+                            justifyContent: isMe ? "flex-end" : "flex-start",
+                            alignItems: "flex-end",
+                            gap: 1,
+                          }}
+                        >
+                          {!isMe && (
+                            <Avatar
+                              sx={{ width: 32, height: 32, fontSize: 14 }}
+                            >
+                              {sender?.name?.[0]}
+                            </Avatar>
+                          )}
+                          <Box sx={{ maxWidth: "70%" }}>
+                            <Paper
+                              sx={{
+                                p: 2,
+                                bgcolor: isMe ? "#6a11cb" : "#f0f0f0",
+                                color: isMe ? "white" : "black",
+                                borderRadius: 2,
+                              }}
+                            >
+                              {!isMe && selectedChat.isChatMode && (
+                                <Typography variant="caption" fontWeight={600}>
+                                  {sender?.name}
+                                  {selectedChat.members.find(
+                                    (m) => m.user === sender
+                                  )?.role === "admin" && (
+                                    <Crown
+                                      size={12}
+                                      style={{
+                                        marginLeft: 4,
+                                        verticalAlign: "middle",
+                                      }}
+                                    />
+                                  )}
+                                </Typography>
+                              )}
+                              {editingMessage === msg._id ? (
+                                <TextField
+                                  size="small"
+                                  fullWidth
+                                  value={editText}
+                                  onChange={(e) => setEditText(e.target.value)}
+                                  onKeyPress={(e) =>
+                                    e.key === "Enter" && editMessage(msg._id)
+                                  }
+                                  InputProps={{
+                                    endAdornment: (
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => editMessage(msg._id)}
+                                      >
+                                        <Check />
+                                      </IconButton>
+                                    ),
+                                  }}
+                                />
+                              ) : (
+                                <Typography>{msg.text}</Typography>
+                              )}
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  mt: 0.5,
+                                }}
+                              >
+                                <Typography
+                                  variant="caption"
+                                  sx={{ opacity: 0.7 }}
+                                >
+                                  {msg.createdAt && formatTime(msg.createdAt)}
+                                </Typography>
+                                {isMe && (
+                                  <Box sx={{ display: "flex", gap: 0.5 }}>
+                                    {msg.status === "read" ? (
+                                      <CheckCheck size={14} />
+                                    ) : (
+                                      <Check size={14} />
+                                    )}
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => openMessageMenu(e, msg)}
+                                    >
+                                      <MoreVertical size={14} />
+                                    </IconButton>
+                                  </Box>
+                                )}
+                              </Box>
+                            </Paper>
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                    <div ref={messagesEndRef} />
+                  </Box>
+
+                  <Box sx={{ p: 2, borderTop: "1px solid #eee" }}>
+                    <TextField
+                      fullWidth
+                      placeholder="Сообщение..."
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyPress={(e) =>
+                        e.key === "Enter" && !e.shiftKey && sendMessage()
+                      }
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton onClick={sendMessage} color="primary">
+                              <SendHorizonal />
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                  </Box>
+                </Paper>
+              )}
+            </Grid>
+          </Grid>
+        )}
+      </Container>
+
+      {/* Диалог создания чата / добавления участника */}
+      <Dialog
+        open={openChatDialog}
+        onClose={() => {
+          setOpenChatDialog(false);
+          setSelectedUsers([]);
+          setChatName("");
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          {selectedChat ? "Добавить участника" : "Новый чат"}
+        </DialogTitle>
+        <DialogContent>
+          {!selectedChat && (
+            <TextField
+              fullWidth
+              label="Название группы (опционально)"
+              value={chatName}
+              onChange={(e) => setChatName(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+          )}
+          <TextField
+            fullWidth
+            label="Поиск"
+            value={searchUser}
+            onChange={(e) => setSearchUser(e.target.value)}
+            InputProps={{ startAdornment: <Search /> }}
+            sx={{ mb: 2 }}
+          />
+          <List>
+            {users
+              .filter((u) =>
+                u.name.toLowerCase().includes(searchUser.toLowerCase())
+              )
+              .filter((u) =>
+                selectedChat
+                  ? !selectedChat?.members?.some?.(
+                      (m) => (m.user as string) === u._id
+                    )
+                  : true
+              )
+              .map((u) => (
+                <ListItemButton
+                  key={u._id}
+                  selected={selectedUsers.includes(u._id)}
+                  onClick={() =>
+                    setSelectedUsers((prev) =>
+                      prev.includes(u._id)
+                        ? prev.filter((id) => id !== u._id)
+                        : [...prev, u._id]
+                    )
+                  }
+                >
+                  <ListItemAvatar>
+                    <Avatar>{u.name[0]}</Avatar>
+                  </ListItemAvatar>
+                  <ListItemText primary={u.name} secondary={u.email} />
+                </ListItemButton>
+              ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setOpenChatDialog(false);
+              setSelectedUsers([]);
+              setChatName("");
+            }}
+          >
+            Отмена
+          </Button>
+          <Button
+            onClick={() => {
+              if (selectedChat) {
+                selectedUsers.forEach((id) => addMember(id));
+                setOpenChatDialog(false);
+                setSelectedUsers([]);
+              } else {
+                createChat();
+              }
+            }}
+            variant="contained"
+            disabled={selectedUsers.length === 0}
+          >
+            {selectedChat ? "Добавить" : "Создать"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Диалог участников */}
+      <Dialog
+        open={openMembersDialog}
+        onClose={() => setOpenMembersDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Участники</DialogTitle>
+        <DialogContent>
+          <List>
+            {selectedChat?.members?.map?.((member) => {
+              const memberUser = member.user as string;
+              const isMe = memberUser === user?._id;
+              const isAdmin = member.role === "admin";
+              return (
+                <div key={memberUser}>
+                  <ListItemButton disabled={isMe}>
+                    <ListItemAvatar>
+                      <Avatar>
+                        {users.find((u) => u._id === memberUser)?.name?.[0]}
+                      </Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={
+                        <Box
+                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                        >
+                          {users.find((u) => u._id === memberUser)?.name}
+                          {isAdmin && (
+                            <Chip label="Админ" size="small" color="primary" />
+                          )}
+                        </Box>
+                      }
+                      secondary={users.find((u) => u._id === memberUser)?.email}
+                    />
+                    {isChatAdmin && !isMe && (
+                      <>
+                        <Tooltip title="Сделать админом">
+                          <IconButton
+                            onClick={() => changeRole(memberUser, "admin")}
+                          >
+                            <UserCheck size={18} />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Убрать админа">
+                          <IconButton
+                            onClick={() => changeRole(memberUser, "member")}
+                          >
+                            <UserMinus size={18} />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Удалить">
+                          <IconButton
+                            color="error"
+                            onClick={() => removeMember(memberUser)}
+                          >
+                            <Trash2 size={18} />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                  </ListItemButton>
+                  <Divider />
+                </div>
+              );
+            })}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenMembersDialog(false)}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Меню сообщения */}
+      <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={closeMenus}>
+        <MenuItem
+          onClick={() => {
+            setEditingMessage(menuMessage?._id || null);
+            setEditText(menuMessage?.text || "");
+            closeMenus();
           }}
         >
-          <CircularProgress sx={{ color: "#6a11cb" }} />
-          <Typography color="text.secondary">Загрузка...</Typography>
-        </Box>
-      )}
+          <Edit size={16} /> Редактировать
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            deleteMessage(menuMessage?._id || "");
+            closeMenus();
+          }}
+          sx={{ color: "error.main" }}
+        >
+          <Trash2 size={16} /> Удалить
+        </MenuItem>
+      </Menu>
 
-      {/* Toast Notifications */}
+      {/* Меню чата */}
+      <Menu
+        anchorEl={chatMenuAnchor}
+        open={!!chatMenuAnchor}
+        onClose={closeMenus}
+      >
+        {isChatAdmin && (
+          <MenuItem
+            onClick={() => {
+              setOpenChatDialog(true);
+              setSelectedUsers([]);
+              closeMenus();
+            }}
+          >
+            <UserPlus size={16} style={{ marginRight: 8 }} />
+            Добавить участника
+          </MenuItem>
+        )}
+        <MenuItem
+          onClick={() => {
+            if (selectedChat) deleteChat(selectedChat._id);
+            closeMenus();
+          }}
+          sx={{ color: "error.main" }}
+        >
+          <Trash2 size={16} style={{ marginRight: 8 }} />
+          Удалить чат
+        </MenuItem>
+      </Menu>
+
       <Snackbar
         open={toast.open}
         autoHideDuration={4000}
         onClose={handleCloseToast}
-        anchorOrigin={{ vertical: "top", horizontal: "center" }}
       >
-        <Alert
-          onClose={handleCloseToast}
-          severity={toast.severity}
-          sx={{ width: "100%" }}
-        >
+        <Alert onClose={handleCloseToast} severity={toast.severity}>
           {toast.message}
         </Alert>
       </Snackbar>
-
-      {/* Auth Form */}
-      {!user && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
-          style={{ width: "100%", maxWidth: 420 }}
-        >
-          <Card
-            sx={{
-              bgcolor: "#fff",
-              p: 4,
-              borderRadius: 3,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.1)",
-              border: "1px solid rgba(106, 17, 203, 0.2)",
-            }}
-          >
-            <CardHeader
-              title="Добро пожаловать! 🚀"
-              titleTypographyProps={{
-                align: "center",
-                variant: "h5",
-                fontWeight: 700,
-                color: "#6a11cb",
-              }}
-            />
-            <CardContent>
-              <TextField
-                fullWidth
-                label="Имя"
-                variant="outlined"
-                value={auth.name}
-                onChange={(e) => setAuth({ ...auth, name: e.target.value })}
-                sx={{ mb: 2 }}
-                disabled={loading}
-              />
-              <TextField
-                fullWidth
-                label="Email"
-                type="email"
-                variant="outlined"
-                value={auth.email}
-                onChange={(e) => setAuth({ ...auth, email: e.target.value })}
-                sx={{ mb: 2 }}
-                disabled={loading}
-              />
-              <TextField
-                fullWidth
-                label="Пароль"
-                type="password"
-                variant="outlined"
-                value={auth.password}
-                onChange={(e) => setAuth({ ...auth, password: e.target.value })}
-                sx={{ mb: 3 }}
-                disabled={loading}
-              />
-              <Grid container spacing={2}>
-                <Grid>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    onClick={() => handleAuth("register")}
-                    startIcon={<UserPlus size={18} />}
-                    disabled={loading}
-                    sx={{
-                      height: 48,
-                      fontWeight: 600,
-                      borderColor: "#6a11cb",
-                      color: "#6a11cb",
-                      "&:hover": { bgcolor: "rgba(106, 17, 203, 0.08)" },
-                    }}
-                  >
-                    Регистрация
-                  </Button>
-                </Grid>
-                <Grid>
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    onClick={() => handleAuth("login")}
-                    startIcon={<LogIn size={18} />}
-                    disabled={loading}
-                    sx={{
-                      height: 48,
-                      fontWeight: 600,
-                      bgcolor: "#6a11cb",
-                      "&:hover": { bgcolor: "#5a0db8" },
-                    }}
-                  >
-                    Вход
-                  </Button>
-                </Grid>
-              </Grid>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
-
-      {/* Blog Content */}
-      {user && (
-        <Container maxWidth="sm">
-          {/* Create Post */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-          >
-            <Card
-              sx={{
-                bgcolor: "#fff",
-                borderRadius: 3,
-                mt: 2,
-                mb: 4,
-                p: 3,
-                boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-                border: "1px solid rgba(106, 17, 203, 0.15)",
-              }}
-            >
-              <CardHeader
-                title="Что у вас нового? 🌟"
-                titleTypographyProps={{
-                  variant: "h6",
-                  fontWeight: 600,
-                  color: "#6a11cb",
-                }}
-              />
-              <CardContent>
-                <TextField
-                  fullWidth
-                  label="Заголовок"
-                  variant="outlined"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  sx={{ mb: 2 }}
-                  disabled={loading}
-                />
-                <TextField
-                  fullWidth
-                  label="Поделитесь мыслями..."
-                  multiline
-                  minRows={3}
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  sx={{ mb: 3 }}
-                  disabled={loading}
-                />
-                <Button
-                  fullWidth
-                  variant="contained"
-                  onClick={handleCreate}
-                  disabled={loading || !title.trim() || !content.trim()}
-                  startIcon={<SendHorizonal size={18} />}
-                  sx={{
-                    height: 48,
-                    fontWeight: 600,
-                    bgcolor: "#6a11cb",
-                    "&:hover": { bgcolor: "#5a0db8" },
-                  }}
-                >
-                  Опубликовать
-                </Button>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          {/* Posts List */}
-          {!posts.length && !loading ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.4 }}
-            >
-              <Typography
-                textAlign="center"
-                sx={{ opacity: 0.7, fontStyle: "italic", mt: 4 }}
-              >
-                Постов пока нет... Будьте первым! ✨
-              </Typography>
-            </motion.div>
-          ) : (
-            <Box display="flex" flexDirection="column" gap={3}>
-              {posts.map((p, index) => {
-                const isPostAdmin = p.author.role === "admin";
-                const isLiked = user ? p.likes.includes(user._id) : false;
-
-                return (
-                  <motion.div
-                    key={p._id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
-                  >
-                    <Card
-                      sx={{
-                        bgcolor: isPostAdmin ? "#fffbe6" : "#fff",
-                        border: isPostAdmin
-                          ? "1px solid #ff6b6b"
-                          : "1px solid #e0e0e0",
-                        borderRadius: 3,
-                        overflow: "hidden",
-                        boxShadow: isPostAdmin
-                          ? "0 0 15px rgba(255, 107, 107, 0.3)"
-                          : "0 2px 12px rgba(0,0,0,0.06)",
-                        position: "relative",
-                      }}
-                    >
-                      {isPostAdmin && (
-                        <Box
-                          sx={{
-                            position: "absolute",
-                            top: 8,
-                            right: 8,
-                            bgcolor: "#ff6b6b",
-                            color: "white",
-                            px: 1,
-                            py: 0.5,
-                            borderRadius: 1,
-                            fontSize: "0.7rem",
-                            fontWeight: 600,
-                          }}
-                        >
-                          ADMIN
-                        </Box>
-                      )}
-                      <CardHeader
-                        avatar={
-                          isPostAdmin ? (
-                            <Avatar sx={{ bgcolor: "transparent", p: 0.5 }}>
-                              <img
-                                src="/snoopy-esnupi.gif"
-                                alt="Admin"
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  objectFit: "contain",
-                                }}
-                              />
-                            </Avatar>
-                          ) : (
-                            <Avatar
-                              sx={{
-                                bgcolor: "#e3f2fd",
-                                color: "#1976d2",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {p.author.name[0].toUpperCase()}
-                            </Avatar>
-                          )
-                        }
-                        title={
-                          <Typography fontWeight={600} color="#333">
-                            {p.author.name}
-                          </Typography>
-                        }
-                        subheader={
-                          <Typography
-                            variant="caption"
-                            color={isPostAdmin ? "#d32f2f" : "text.secondary"}
-                          >
-                            {isPostAdmin ? "👑 Админ" : "Пользователь"}
-                          </Typography>
-                        }
-                      />
-                      <CardContent>
-                        <Typography
-                          variant="h6"
-                          fontWeight={700}
-                          color="#222"
-                          gutterBottom
-                        >
-                          {p.title}
-                        </Typography>
-                        <Typography
-                          variant="body1"
-                          color="#444"
-                          lineHeight={1.6}
-                        >
-                          {p.content}
-                        </Typography>
-                      </CardContent>
-                      <CardActions
-                        sx={{ justifyContent: "space-between", px: 2, pb: 2 }}
-                      >
-                        <IconButton
-                          onClick={() => handleLike(p._id)}
-                          sx={{
-                            color: isLiked ? "#ff1744" : "#666",
-                            transition: "all 0.2s",
-                            "&:hover": { transform: "scale(1.1)" },
-                            ":focus": { outline: 0 },
-                          }}
-                        >
-                          <motion.div
-                            animate={{ scale: isLiked ? [1, 1.3, 1] : 1 }}
-                            transition={{ duration: 0.3 }}
-                          >
-                            <Heart
-                              size={20}
-                              fill={isLiked ? "#ff1744" : "none"}
-                              strokeWidth={2}
-                            />
-                          </motion.div>
-                          <Typography sx={{ ml: 0.5, fontWeight: 500 }}>
-                            {p.likes.length}
-                          </Typography>
-                        </IconButton>
-
-                        {(p.author.email === user.email || isAdmin) && (
-                          <IconButton
-                            onClick={() => handleDelete(p._id)}
-                            sx={{
-                              color: "#ff4444",
-                              "&:hover": { bgcolor: "rgba(255,68,68,0.1)" },
-                            }}
-                          >
-                            <Trash2 size={18} />
-                          </IconButton>
-                        )}
-                      </CardActions>
-                    </Card>
-                  </motion.div>
-                );
-              })}
-            </Box>
-          )}
-        </Container>
-      )}
     </Box>
   );
 }
