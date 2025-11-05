@@ -56,7 +56,76 @@ import Grid from "@mui/material/GridLegacy";
 import { format } from "date-fns";
 
 const API_URL = "https://blog-node-km1z.onrender.com";
+// Глобальная утилита: сколько времени прошло с даты
+function formatTimeAgo(dateString: string): string {
+  const now = new Date();
+  const past = new Date(dateString);
+  const diffInMs = now.getTime() - past.getTime();
+  const diffInSeconds = Math.floor(diffInMs / 1000);
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  const diffInDays = Math.floor(diffInHours / 24);
 
+  if (diffInSeconds < 60) {
+    return "только что";
+  }
+
+  if (diffInMinutes < 60) {
+    return `${diffInMinutes} ${pluralize(
+      diffInMinutes,
+      "мин",
+      "минуту",
+      "минуты",
+      "минут"
+    )} назад`;
+  }
+
+  if (diffInHours < 24) {
+    return `${diffInHours} ${pluralize(
+      diffInHours,
+      "ч",
+      "час",
+      "часа",
+      "часов"
+    )} назад`;
+  }
+
+  if (diffInDays === 1) {
+    return "вчера";
+  }
+
+  if (diffInDays < 7) {
+    return `${diffInDays} ${pluralize(
+      diffInDays,
+      "дн",
+      "день",
+      "дня",
+      "дней"
+    )} назад`;
+  }
+
+  return format(past, "dd.MM.yyyy");
+}
+
+// Вспомогательная функция для склонения
+function pluralize(
+  count: number,
+  suffix: string,
+  one: string,
+  few: string,
+  many: string
+): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) {
+    return one + (suffix ? "" : "");
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+    return few + (suffix ? "" : "");
+  }
+  return many + (suffix ? "" : "");
+}
 interface User {
   _id: string;
   name: string;
@@ -77,7 +146,7 @@ interface Chat {
   name?: string;
   isChatMode: boolean;
   members: { user: User | string; role: "admin" | "member" }[];
-  messages: string[];
+  messages: Omit<Message[], "createdAt">;
 }
 
 interface Message {
@@ -86,6 +155,7 @@ interface Message {
   text: string;
   status: "sent" | "read";
   createdAt: string;
+  readBy: string[];
 }
 
 interface Toast {
@@ -177,15 +247,75 @@ export default function BlogPage() {
   const loadChats = useCallback(async () => {
     const token = localStorage.getItem("token");
     if (!token || !user) return;
+
     try {
       const res = await fetch(`${API_URL}/chats`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setChats(data);
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
-    } catch {
+
+      const data: Chat[] = await res.json();
+
+      // ДЕБАГ 1: Что пришло?
+      console.log(
+        "Raw chats from server:",
+        data.map((c) => ({
+          id: c._id,
+          messagesCount: c.messages.length,
+          lastCreatedAt: c.messages[c.messages.length - 1]?.createdAt,
+        }))
+      );
+
+      // ДЕБАГ 2: Проверим, что даты парсятся
+      data.forEach((chat) => {
+        const last = chat.messages[chat.messages.length - 1];
+        if (last?.createdAt) {
+          const time = new Date(last.createdAt).getTime();
+          console.log(
+            `Chat ${chat._id} → ${last.createdAt} → ${time} (${
+              isNaN(time) ? "INVALID" : "OK"
+            })`
+          );
+        }
+      });
+
+      // Сортировка с защитой
+      const sortedChats = [...data].sort((a, b) => {
+        const timeA =
+          a.messages.length > 0
+            ? new Date(a.messages[a.messages.length - 1].createdAt).getTime()
+            : -Infinity;
+
+        const timeB =
+          b.messages.length > 0
+            ? new Date(b.messages[b.messages.length - 1].createdAt).getTime()
+            : -Infinity;
+
+        const diff = timeB - timeA;
+        // ДЕБАГ 3: Покажем, как сравниваются
+        if (a._id === data[0]._id || b._id === data[0]._id) {
+          console.log(`Compare: A=${timeA}, B=${timeB}, diff=${diff}`);
+        }
+        return diff;
+      });
+
+      // ДЕБАГ 4: Что стало после сортировки?
+      console.log(
+        "Sorted chats:",
+        sortedChats.map((c) => ({
+          id: c._id,
+          lastTime: new Date(
+            c.messages[c.messages.length - 1]?.createdAt || 0
+          ).toISOString(),
+        }))
+      );
+
+      setChats(sortedChats);
+    } catch (err) {
+      console.error("Load chats error:", err);
       showToast("Ошибка загрузки чатов", "error");
     }
   }, [user]);
@@ -198,12 +328,12 @@ export default function BlogPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setUsers(data.filter((u: User) => u._id !== user?._id));
+        setUsers(data);
       }
     } catch {
       showToast("Ошибка загрузки пользователей", "error");
     }
-  }, [user]);
+  }, []);
 
   const loadMessages = useCallback(
     async (chatId: string) => {
@@ -382,7 +512,7 @@ export default function BlogPage() {
     if (selectedUsers.length === 0)
       return showToast("Выберите пользователя", "error");
     const token = localStorage.getItem("token");
-    const isGroup = !(selectedUsers.length > 1 || chatName.trim());
+    const isGroup = !!(selectedUsers.length > 1 || chatName.trim());
 
     try {
       const res = await fetch(`${API_URL}/chats`, {
@@ -394,7 +524,7 @@ export default function BlogPage() {
         body: JSON.stringify({
           users: selectedUsers,
           isChatMode: isGroup,
-          name: isGroup ? chatName : undefined,
+          name: chatName,
           message: isGroup ? `${chatName} создан!` : "Чат начат!",
         }),
       });
@@ -421,6 +551,7 @@ export default function BlogPage() {
       sender: user?._id as string,
       text: newMessage,
       status: "sent",
+      readBy: [],
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempMsg]);
@@ -601,6 +732,7 @@ export default function BlogPage() {
     if (chat.name) return chat.name;
     const other = users
       .filter((m) => chat?.members?.some?.((u) => m._id === u.user))
+      .filter((m) => m._id !== user?._id)
       .map((el) => el.name);
     return other?.join(",") || "Чат";
   };
@@ -819,33 +951,71 @@ export default function BlogPage() {
                   </IconButton>
                 </Box>
                 <List sx={{ flex: 1, overflow: "auto" }}>
-                  {chats.map((chat) => (
-                    <ListItemButton
-                      key={chat._id}
-                      selected={selectedChat?._id === chat._id}
-                      onClick={() => setSelectedChat(chat)}
-                      sx={{
-                        borderLeft:
-                          selectedChat?._id === chat._id
-                            ? "4px solid #6a11cb"
-                            : "4px solid transparent",
-                      }}
-                    >
-                      <ListItemAvatar>
-                        <Avatar
-                          sx={{
-                            bgcolor: chat.isChatMode ? "#e3f2fd" : "#fff3e0",
-                          }}
-                        >
-                          {getChatAvatar(chat)}
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={getChatName(chat)}
-                        secondary={messages[messages.length - 1]?.text}
-                      />
-                    </ListItemButton>
-                  ))}
+                  {chats.map((chat) => {
+                    const lastMessage = chat.messages[chat.messages.length - 1];
+                    const unreadMessagesLength = chat.messages.filter(
+                      (c) =>
+                        !c.readBy?.includes?.(user._id) && c.sender !== user._id
+                    ).length;
+
+                    return (
+                      <ListItemButton
+                        key={chat._id}
+                        selected={selectedChat?._id === chat._id}
+                        onClick={() => setSelectedChat(chat)}
+                        sx={{
+                          borderLeft:
+                            selectedChat?._id === chat._id
+                              ? "4px solid #6a11cb"
+                              : "4px solid transparent",
+                        }}
+                      >
+                        <ListItemAvatar>
+                          <Avatar
+                            sx={{
+                              bgcolor: chat.isChatMode ? "#e3f2fd" : "#fff3e0",
+                            }}
+                          >
+                            {getChatAvatar(chat)}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={getChatName(chat)}
+                          secondary={`${
+                            lastMessage.sender === user._id
+                              ? "Вы"
+                              : users.find((u) => u._id === lastMessage.sender)
+                                  ?.name
+                          }: ${lastMessage?.text} ${formatTimeAgo(
+                            lastMessage.createdAt
+                          )}`}
+                        />
+                        <Box sx={{ display: "flex", gap: 0.5 }}>
+                          {unreadMessagesLength ? (
+                            <>
+                              <Avatar
+                                sx={{
+                                  bgcolor: "#ff1744",
+                                  color: "white",
+                                  width: 24,
+                                  height: 24,
+                                  fontSize: 12,
+                                }}
+                              >
+                                {unreadMessagesLength}
+                              </Avatar>
+                            </>
+                          ) : lastMessage.sender === user._id ? (
+                            lastMessage.status === "sent" ? (
+                              <Check color="green" size={14} />
+                            ) : (
+                              <CheckCheck color="green" size={14} />
+                            )
+                          ) : null}
+                        </Box>
+                      </ListItemButton>
+                    );
+                  })}
                 </List>
               </Paper>
             </Grid>
@@ -1046,7 +1216,7 @@ export default function BlogPage() {
                           {getChatName(selectedChat)}
                         </Typography>
                       )}
-                      {selectedChat.isChatMode && isChatAdmin && (
+                      {
                         <IconButton
                           size="small"
                           onClick={() => {
@@ -1057,7 +1227,7 @@ export default function BlogPage() {
                         >
                           <Edit size={16} />
                         </IconButton>
-                      )}
+                      }
                     </Box>
 
                     <Box sx={{ display: "flex", gap: 1 }}>
@@ -1086,8 +1256,10 @@ export default function BlogPage() {
 
                   <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
                     {messages.map((msg) => {
-                      const sender = msg.sender as User;
-                      const isMe = (sender as unknown as string) === user?._id;
+                      const sender = users.find(
+                        (u) => u._id === msg.sender
+                      ) as User;
+                      const isMe = sender._id === user?._id;
                       return (
                         <Box
                           key={msg._id}
@@ -1119,7 +1291,7 @@ export default function BlogPage() {
                                 <Typography variant="caption" fontWeight={600}>
                                   {sender?.name}
                                   {selectedChat.members.find(
-                                    (m) => m.user === sender
+                                    (m) => m.user === sender._id
                                   )?.role === "admin" && (
                                     <Crown
                                       size={12}
@@ -1253,6 +1425,7 @@ export default function BlogPage() {
           />
           <List>
             {users
+              .filter((u) => u._id !== user?._id)
               .filter((u) =>
                 u.name.toLowerCase().includes(searchUser.toLowerCase())
               )
@@ -1325,6 +1498,8 @@ export default function BlogPage() {
               const memberUser = member.user as string;
               const isMe = memberUser === user?._id;
               const isAdmin = member.role === "admin";
+              console.log(users, selectedChat.members);
+
               return (
                 <div key={memberUser}>
                   <ListItemButton disabled={isMe}>
