@@ -56,76 +56,6 @@ import Grid from "@mui/material/GridLegacy";
 import { format } from "date-fns";
 
 const API_URL = "https://blog-node-km1z.onrender.com";
-// Глобальная утилита: сколько времени прошло с даты
-function formatTimeAgo(dateString: string): string {
-  const now = new Date();
-  const past = new Date(dateString);
-  const diffInMs = now.getTime() - past.getTime();
-  const diffInSeconds = Math.floor(diffInMs / 1000);
-  const diffInMinutes = Math.floor(diffInSeconds / 60);
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  const diffInDays = Math.floor(diffInHours / 24);
-
-  if (diffInSeconds < 60) {
-    return "только что";
-  }
-
-  if (diffInMinutes < 60) {
-    return `${diffInMinutes} ${pluralize(
-      diffInMinutes,
-      "мин",
-      "минуту",
-      "минуты",
-      "минут"
-    )} назад`;
-  }
-
-  if (diffInHours < 24) {
-    return `${diffInHours} ${pluralize(
-      diffInHours,
-      "ч",
-      "час",
-      "часа",
-      "часов"
-    )} назад`;
-  }
-
-  if (diffInDays === 1) {
-    return "вчера";
-  }
-
-  if (diffInDays < 7) {
-    return `${diffInDays} ${pluralize(
-      diffInDays,
-      "дн",
-      "день",
-      "дня",
-      "дней"
-    )} назад`;
-  }
-
-  return format(past, "dd.MM.yyyy");
-}
-
-// Вспомогательная функция для склонения
-function pluralize(
-  count: number,
-  suffix: string,
-  one: string,
-  few: string,
-  many: string
-): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-
-  if (mod10 === 1 && mod100 !== 11) {
-    return one + (suffix ? "" : "");
-  }
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
-    return few + (suffix ? "" : "");
-  }
-  return many + (suffix ? "" : "");
-}
 interface User {
   _id: string;
   name: string;
@@ -200,7 +130,12 @@ export default function BlogPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isAdmin = user?.role === "admin";
+function formatTimeAgo(dateString: string): string {
+}
 
+// Вспомогательная функция для склонения
+function pluralize(
+}
   const showToast = (
     message: string,
     severity: "success" | "error" | "info" = "info"
