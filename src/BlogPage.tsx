@@ -980,14 +980,41 @@ function pluralize(
                         </ListItemAvatar>
                         <ListItemText
                           primary={getChatName(chat)}
-                          secondary={`${
-                            lastMessage.sender === user._id
-                              ? "Вы"
-                              : users.find((u) => u._id === lastMessage.sender)
-                                  ?.name
-                          }: ${lastMessage?.text} ${formatTimeAgo(
-                            lastMessage.createdAt
-                          )}`}
+                          secondary={
+                            <div>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: "5px",
+                                  flexWrap: "wrap",
+                                }}
+                              >
+                                <span>
+                                  {lastMessage.sender === user._id
+                                    ? "Вы"
+                                    : users.find(
+                                        (u) => u._id === lastMessage.sender
+                                      )?.name}
+                                  :
+                                </span>
+                                <span>{lastMessage?.text}</span>
+                              </div>
+                              <span style={{ fontSize: "12px" }}>
+                                {formatTimeAgo(lastMessage.createdAt)}
+                              </span>
+                            </div>
+                          }
+                          slotProps={{
+                            primary: {
+                              style: {
+                                fontWeight: "600",
+                                overflow: "hidden",
+                                textWrap: "nowrap",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "none",
+                              },
+                            },
+                          }}
                         />
                         <Box sx={{ display: "flex", gap: 0.5 }}>
                           {unreadMessagesLength ? (
@@ -1205,13 +1232,35 @@ function pluralize(
                           size="small"
                           value={newChatName}
                           onChange={(e) => setNewChatName(e.target.value)}
-                          onKeyPress={(e) =>
-                            e.key === "Enter" && editChatName()
-                          }
-                          sx={{ input: { color: "white" } }}
+                          onKeyDown={(e) => e.key === "Enter" && editChatName()}
+                          sx={{
+                            overflow: "hidden",
+                            textWrap: "nowrap",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "none",
+                            bgcolor: "white",
+                          }}
+                          slotProps={{
+                            input: {
+                              style: {
+                                color: "black",
+                                borderRadius: "0px",
+                                border: "none",
+                              },
+                            },
+                          }}
                         />
                       ) : (
-                        <Typography fontWeight={600}>
+                        <Typography
+                          sx={{
+                            overflow: "hidden",
+                            textWrap: "nowrap",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "none",
+                            maxWidth: "200px",
+                          }}
+                          fontWeight={600}
+                        >
                           {getChatName(selectedChat)}
                         </Typography>
                       )}
@@ -1277,10 +1326,10 @@ function pluralize(
                               {sender?.name?.[0]}
                             </Avatar>
                           )}
-                          <Box sx={{ maxWidth: "70%" }}>
+                          <Box sx={{ minWidth: "10%" }}>
                             <Paper
                               sx={{
-                                p: 2,
+                                p: 1.3,
                                 bgcolor: isMe ? "#6a11cb" : "#f0f0f0",
                                 color: isMe ? "white" : "black",
                                 borderRadius: 2,
@@ -1288,73 +1337,111 @@ function pluralize(
                             >
                               {!isMe && selectedChat.isChatMode && (
                                 <Typography variant="caption" fontWeight={600}>
-                                  {sender?.name}
-                                  {selectedChat.members.find(
-                                    (m) => m.user === sender._id
-                                  )?.role === "admin" && (
-                                    <Crown
-                                      size={12}
-                                      style={{
-                                        marginLeft: 4,
-                                        verticalAlign: "middle",
-                                      }}
-                                    />
-                                  )}
+                                  <span
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    {sender?.name}
+
+                                    {selectedChat.members.find(
+                                      (m) => m.user === sender._id
+                                    )?.role === "admin" && (
+                                      <Crown
+                                        size={12}
+                                        style={{
+                                          marginLeft: 4,
+                                          verticalAlign: "middle",
+                                        }}
+                                      />
+                                    )}
+                                  </span>
                                 </Typography>
                               )}
-                              {editingMessage === msg._id ? (
-                                <TextField
-                                  size="small"
-                                  fullWidth
-                                  value={editText}
-                                  onChange={(e) => setEditText(e.target.value)}
-                                  onKeyPress={(e) =>
-                                    e.key === "Enter" && editMessage(msg._id)
-                                  }
-                                  InputProps={{
-                                    endAdornment: (
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => editMessage(msg._id)}
-                                      >
-                                        <Check />
-                                      </IconButton>
-                                    ),
-                                  }}
-                                />
-                              ) : (
-                                <Typography>{msg.text}</Typography>
-                              )}
-                              <Box
-                                sx={{
+                              <div
+                                style={{
                                   display: "flex",
                                   justifyContent: "space-between",
+                                  gap: "10px",
                                   alignItems: "center",
-                                  mt: 0.5,
                                 }}
                               >
-                                <Typography
-                                  variant="caption"
-                                  sx={{ opacity: 0.7 }}
-                                >
-                                  {msg.createdAt && formatTime(msg.createdAt)}
-                                </Typography>
-                                {isMe && (
-                                  <Box sx={{ display: "flex", gap: 0.5 }}>
-                                    {msg.status === "read" ? (
-                                      <CheckCheck size={14} />
-                                    ) : (
-                                      <Check size={14} />
-                                    )}
-                                    <IconButton
-                                      size="small"
-                                      onClick={(e) => openMessageMenu(e, msg)}
-                                    >
-                                      <MoreVertical size={14} />
-                                    </IconButton>
-                                  </Box>
+                                {editingMessage === msg._id ? (
+                                  <TextField
+                                    sx={{
+                                      bgcolor: "white",
+                                      border: "none",
+                                      outline: "none",
+                                    }}
+                                    size="small"
+                                    fullWidth
+                                    value={editText}
+                                    onChange={(e) =>
+                                      setEditText(e.target.value)
+                                    }
+                                    onKeyDown={(e) =>
+                                      e.key === "Enter" && editMessage(msg._id)
+                                    }
+                                    slotProps={{
+                                      input: {
+                                        style: {
+                                          borderRadius: "0",
+                                        },
+                                        endAdornment: (
+                                          <IconButton
+                                            size="small"
+                                            onClick={() => editMessage(msg._id)}
+                                          >
+                                            <Check />
+                                          </IconButton>
+                                        ),
+                                      },
+                                    }}
+                                  />
+                                ) : (
+                                  <Typography sx={{ display: "flex" }}>
+                                    {msg.text}
+                                  </Typography>
                                 )}
-                              </Box>
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    gap: "10px",
+                                  }}
+                                >
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ opacity: 0.7 }}
+                                  >
+                                    {msg.createdAt && formatTime(msg.createdAt)}
+                                  </Typography>
+                                  {isMe && (
+                                    <Box
+                                      sx={{
+                                        display: "flex",
+                                        gap: 0.5,
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                      }}
+                                    >
+                                      {msg.status === "read" ? (
+                                        <CheckCheck size={14} />
+                                      ) : (
+                                        <Check size={14} />
+                                      )}
+                                      <IconButton
+                                        size="small"
+                                        onClick={(e) => openMessageMenu(e, msg)}
+                                      >
+                                        <MoreVertical size={14} />
+                                      </IconButton>
+                                    </Box>
+                                  )}
+                                </Box>
+                              </div>
                             </Paper>
                           </Box>
                         </Box>
