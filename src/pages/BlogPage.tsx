@@ -18,6 +18,7 @@ import {
   Crown,
   UserMinus,
   UserCheck,
+  MailQuestion,
 } from "lucide-react";
 
 import {
@@ -128,78 +129,93 @@ export default function BlogPage() {
   const [newChatName, setNewChatName] = useState("");
   const [openMembersDialog, setOpenMembersDialog] = useState(false);
 
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  // Проверка токена в URL при загрузке
+  useEffect(() => {
+    const path = window.location.pathname;
+    const match = path.match(/\/reset\/(.+)/);
+    if (match) {
+      setResetToken(match[1]);
+      // Очищаем адресную строку (опционально)
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isAdmin = user?.role === "admin";
-// Глобальная утилита: сколько времени прошло с даты
-function formatTimeAgo(dateString: string): string {
-  const now = new Date();
-  const past = new Date(dateString);
-  const diffInMs = now.getTime() - past.getTime();
-  const diffInSeconds = Math.floor(diffInMs / 1000);
-  const diffInMinutes = Math.floor(diffInSeconds / 60);
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  const diffInDays = Math.floor(diffInHours / 24);
+  // Глобальная утилита: сколько времени прошло с даты
+  function formatTimeAgo(dateString: string): string {
+    const now = new Date();
+    const past = new Date(dateString);
+    const diffInMs = now.getTime() - past.getTime();
+    const diffInSeconds = Math.floor(diffInMs / 1000);
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    const diffInDays = Math.floor(diffInHours / 24);
 
-  if (diffInSeconds < 60) {
-    return "только что";
+    if (diffInSeconds < 60) {
+      return "только что";
+    }
+
+    if (diffInMinutes < 60) {
+      return `${diffInMinutes} ${pluralize(
+        diffInMinutes,
+        "мин",
+        "минуту",
+        "минуты",
+        "минут"
+      )} назад`;
+    }
+
+    if (diffInHours < 24) {
+      return `${diffInHours} ${pluralize(
+        diffInHours,
+        "ч",
+        "час",
+        "часа",
+        "часов"
+      )} назад`;
+    }
+
+    if (diffInDays === 1) {
+      return "вчера";
+    }
+
+    if (diffInDays < 7) {
+      return `${diffInDays} ${pluralize(
+        diffInDays,
+        "дн",
+        "день",
+        "дня",
+        "дней"
+      )} назад`;
+    }
+
+    return format(past, "dd.MM.yyyy");
   }
 
-  if (diffInMinutes < 60) {
-    return `${diffInMinutes} ${pluralize(
-      diffInMinutes,
-      "мин",
-      "минуту",
-      "минуты",
-      "минут"
-    )} назад`;
-  }
+  // Вспомогательная функция для склонения
+  function pluralize(
+    count: number,
+    suffix: string,
+    one: string,
+    few: string,
+    many: string
+  ): string {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
 
-  if (diffInHours < 24) {
-    return `${diffInHours} ${pluralize(
-      diffInHours,
-      "ч",
-      "час",
-      "часа",
-      "часов"
-    )} назад`;
+    if (mod10 === 1 && mod100 !== 11) {
+      return one + (suffix ? "" : "");
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+      return few + (suffix ? "" : "");
+    }
+    return many + (suffix ? "" : "");
   }
-
-  if (diffInDays === 1) {
-    return "вчера";
-  }
-
-  if (diffInDays < 7) {
-    return `${diffInDays} ${pluralize(
-      diffInDays,
-      "дн",
-      "день",
-      "дня",
-      "дней"
-    )} назад`;
-  }
-
-  return format(past, "dd.MM.yyyy");
-}
-
-// Вспомогательная функция для склонения
-function pluralize(
-  count: number,
-  suffix: string,
-  one: string,
-  few: string,
-  many: string
-): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-
-  if (mod10 === 1 && mod100 !== 11) {
-    return one + (suffix ? "" : "");
-  }
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
-    return few + (suffix ? "" : "");
-  }
-  return many + (suffix ? "" : "");
-}
   const showToast = (
     message: string,
     severity: "success" | "error" | "info" = "info"
@@ -403,13 +419,12 @@ function pluralize(
       });
       const data = await res.json();
       if (res.ok) {
-        localStorage.setItem("token", data.token);
+        if (data.token) {
+          localStorage.setItem("token", data.token);
+        }
         setAuth({ name: "", email: "", password: "" });
         await loadUser();
-        showToast(
-          type === "login" ? "Добро пожаловать!" : "Регистрация успешна!",
-          "success"
-        );
+        showToast(data.message);
       } else {
         showToast(data.message || "Ошибка", "error");
       }
@@ -727,6 +742,53 @@ function pluralize(
     }
   };
 
+  const handleForgotPassword = async (email: string) => {
+    const res = await fetch(`${API_URL}/auth/forgot-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    const jsonResponse = await res.json();
+    console.log(jsonResponse);
+
+    showToast(jsonResponse.message);
+  };
+
+  const handleResetPassword = async () => {
+    if (newPassword !== confirmPassword) {
+      return showToast("Пароли не совпадают", "error");
+    }
+    if (!resetToken) {
+      return showToast("Токен отсутствует", "error");
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/auth/reset-password/${resetToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        showToast("Пароль успешно изменён! Теперь войдите.", "success");
+        setResetToken(null);
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        showToast(data.message || "Ошибка сброса пароля", "error");
+      }
+    } catch {
+      showToast("Сервер недоступен", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const getChatName = (chat: Chat) => {
     if (chat.name) return chat.name;
     const other = users
@@ -851,66 +913,133 @@ function pluralize(
           </Box>
         )}
 
-        {/* Авторизация */}
+        {/* Авторизация + Сброс пароля */}
         {!user && (
           <Grid container justifyContent="center">
             <Grid item xs={12} sm={8} md={6} lg={4}>
               <Card sx={{ p: 4, borderRadius: 3, boxShadow: 3 }}>
-                <CardHeader
-                  title="Вход / Регистрация"
-                  sx={{ textAlign: "center", color: "#6a11cb" }}
-                />
-                <CardContent>
-                  <TextField
-                    fullWidth
-                    label="Имя"
-                    value={auth.name}
-                    onChange={(e) => setAuth({ ...auth, name: e.target.value })}
-                    sx={{ mb: 2 }}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Email"
-                    type="email"
-                    value={auth.email}
-                    onChange={(e) =>
-                      setAuth({ ...auth, email: e.target.value })
-                    }
-                    sx={{ mb: 2 }}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Пароль"
-                    type="password"
-                    value={auth.password}
-                    onChange={(e) =>
-                      setAuth({ ...auth, password: e.target.value })
-                    }
-                    sx={{ mb: 3 }}
-                  />
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <Button
+                {/* Сброс пароля по токену */}
+                {resetToken ? (
+                  <>
+                    <CardHeader
+                      title="Восстановление пароля"
+                      sx={{ textAlign: "center", color: "#6a11cb" }}
+                    />
+                    <CardContent>
+                      <TextField
                         fullWidth
-                        variant="outlined"
-                        onClick={() => handleAuth("register")}
-                        startIcon={<UserPlus />}
-                      >
-                        Регистрация
-                      </Button>
-                    </Grid>
-                    <Grid item xs={6}>
+                        label="Новый пароль"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        sx={{ mb: 2 }}
+                      />
+                      <TextField
+                        fullWidth
+                        label="Повторите пароль"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        sx={{ mb: 3 }}
+                      />
                       <Button
                         fullWidth
                         variant="contained"
-                        onClick={() => handleAuth("login")}
-                        startIcon={<LogIn />}
+                        onClick={handleResetPassword}
+                        disabled={
+                          !newPassword.trim() ||
+                          newPassword !== confirmPassword ||
+                          loading
+                        }
+                        startIcon={
+                          loading ? <CircularProgress size={20} /> : <Check />
+                        }
                       >
-                        Вход
+                        {loading ? "Сохранение..." : "Сменить пароль"}
                       </Button>
-                    </Grid>
-                  </Grid>
-                </CardContent>
+                    </CardContent>
+                  </>
+                ) : (
+                  <>
+                    {/* Обычная форма входа/регистрации */}
+                    <CardHeader
+                      title="Вход / Регистрация"
+                      sx={{ textAlign: "center", color: "#6a11cb" }}
+                    />
+                    <CardContent>
+                      <TextField
+                        fullWidth
+                        label="Имя"
+                        value={auth.name}
+                        onChange={(e) =>
+                          setAuth({ ...auth, name: e.target.value })
+                        }
+                        sx={{ mb: 2 }}
+                      />
+                      <TextField
+                        fullWidth
+                        label="Email"
+                        type="email"
+                        value={auth.email}
+                        onChange={(e) =>
+                          setAuth({ ...auth, email: e.target.value })
+                        }
+                        sx={{ mb: 2 }}
+                      />
+                      <TextField
+                        fullWidth
+                        label="Пароль"
+                        type="password"
+                        value={auth.password}
+                        onChange={(e) =>
+                          setAuth({ ...auth, password: e.target.value })
+                        }
+                        sx={{ mb: 3 }}
+                      />
+                      <Grid
+                        container
+                        display={"flex"}
+                        flexDirection={"column"}
+                        spacing={2}
+                      >
+                        <Grid item>
+                          <Button
+                            fullWidth
+                            variant="outlined"
+                            disabled={!auth.name.trim()}
+                            onClick={() => handleAuth("register")}
+                            startIcon={<UserPlus />}
+                          >
+                            Регистрация
+                          </Button>
+                        </Grid>
+                        <Grid item>
+                          <Button
+                            fullWidth
+                            variant="contained"
+                            onClick={() => handleAuth("login")}
+                            disabled={!!auth.name.trim()}
+                            startIcon={<LogIn />}
+                          >
+                            Вход
+                          </Button>
+                        </Grid>
+                        <Grid item>
+                          <Button
+                            fullWidth
+                            variant="contained"
+                            color="warning"
+                            onClick={() => handleForgotPassword(auth.email)}
+                            disabled={!auth.email.trim()}
+                            startIcon={<MailQuestion />}
+                          >
+                            Забыли пароль?
+                          </Button>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </>
+                )}
               </Card>
             </Grid>
           </Grid>
